@@ -1,38 +1,152 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
-  </head>
-  <body>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WebAR 3D Model with Gestures</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
 
-    <a-scene 
-      mindar-image="imageTargetSrc: ./targets.mind;" 
-      color-space="sRGB" 
-      renderer="colorManagement: true, physicallyCorrectLights" 
-      vr-mode-ui="enabled: false" 
-      device-orientation-permission-ui="enabled: false">
-
-      <a-assets>
-        <a-asset-item id="avatarModel" src="./AnpingMinorArtilleryFort.glb"></a-asset-item>
-      </a-assets>
-
-      <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
-
-      <a-entity mindar-image-target="targetIndex: 0">
+  <script>
+    // 註冊一個名為 'gesture-detector' 的組件，用於偵測螢幕上的觸控事件
+    AFRAME.registerComponent('gesture-detector', {
+      init: function () {
+        this.handleTouchStart = this.handleTouchStart.bind(this);
+        this.handleTouchMove = this.handleTouchMove.bind(this);
+        this.handleTouchEnd = this.handleTouchEnd.bind(this);
+  
+        // 監聽 canvas 上的觸控開始、移動和結束事件
+        this.el.sceneEl.canvas.addEventListener('touchstart', this.handleTouchStart);
+        this.el.sceneEl.canvas.addEventListener('touchmove', this.handleTouchMove);
+        this.el.sceneEl.canvas.addEventListener('touchend', this.handleTouchEnd);
         
-        <a-gltf-model 
-            src="#avatarModel" 
-            rotation="0 0 0" 
-            position="0 0 0" 
-            scale="0.5 0.5 0.5" 
-            animation-mixer>
-        </a-gltf-model>
+        // 用來儲存上一次的觸控狀態，用於計算變化量
+        this.internalState = {
+          previousState: null,
+        };
+      },
+  
+      remove: function () {
+        // 當組件被移除時，記得移除事件監聽器，避免記憶體洩漏
+        this.el.sceneEl.canvas.removeEventListener('touchstart', this.handleTouchStart);
+        this.el.sceneEl.canvas.removeEventListener('touchmove', this.handleTouchMove);
+        this.el.sceneEl.canvas.removeEventListener('touchend', this.handleTouchEnd);
+      },
+  
+      handleTouchStart: function (event) {
+        // 當偵測到兩根手指同時觸碰螢幕時
+        if (event.touches.length === 2) {
+          // 計算並記錄兩指之間的初始距離
+          this.internalState.previousState = {
+            spread: this.getSpread(event.touches),
+          };
+        }
+      },
+  
+      handleTouchMove: function (event) {
+        // 當兩根手指在螢幕上移動時
+        if (event.touches.length === 2 && this.internalState.previousState) {
+          const spread = this.getSpread(event.touches); // 計算現在的兩指距離
+          const previousSpread = this.internalState.previousState.spread; // 取得上一次的距離
+          const spreadChange = spread - previousSpread; // 計算距離的變化量
+  
+          // 發送一個自定義的 'gesture-scale' 事件，並帶上變化的數值
+          this.el.emit('gesture-scale', {
+            spreadChange: spreadChange,
+            startSpread: previousSpread,
+          });
+  
+          // 更新上一次的距離狀態
+          this.internalState.previousState.spread = spread;
+        }
+      },
+  
+      handleTouchEnd: function (event) {
+        // 當手指離開螢幕，導致觸控點少於兩個時，重置狀態
+        if (event.touches.length < 2) {
+          this.internalState.previousState = null;
+        }
+      },
+  
+      // 計算兩點之間距離的輔助函式
+      getSpread: function (touches) {
+        const touch1 = touches[0];
+        const touch2 = touches[1];
+        const dx = touch1.clientX - touch2.clientX;
+        const dy = touch1.clientY - touch2.clientY;
+        return Math.sqrt(dx * dx + dy * dy);
+      },
+    });
 
+    // 註冊一個名為 'gesture-handler' 的組件，用於接收 'gesture-scale' 事件並對模型進行縮放
+    AFRAME.registerComponent('gesture-handler', {
+      schema: {
+        enabled: { default: true },
+        minScale: { default: 0.1 }, // 最小縮放比例
+        maxScale: { default: 10 },  // 最大縮放比例
+      },
+
+      init: function () {
+        this.handleScale = this.handleScale.bind(this);
+        this.initialScale = this.el.object3D.scale.clone(); // 記錄模型的初始大小
+        this.scaleFactor = 1; // 目前的縮放因子
+
+        // 監聽由 gesture-detector 發出的 'gesture-scale' 事件
+        this.el.sceneEl.addEventListener('gesture-scale', this.handleScale);
+      },
+
+      remove: function () {
+        this.el.sceneEl.removeEventListener('gesture-scale', this.handleScale);
+      },
+
+      handleScale: function (event) {
+        // 計算新的縮放因子
+        this.scaleFactor *=
+          1 + (event.detail.spreadChange / event.detail.startSpread) * 2;
+
+        // 限制縮放因子在最大和最小值之間
+        this.scaleFactor = Math.min(
+          Math.max(this.scaleFactor, this.data.minScale),
+          this.data.maxScale
+        );
+
+        // 應用新的縮放值到模型的 X, Y, Z 軸
+        this.el.object3D.scale.x = this.scaleFactor * this.initialScale.x;
+        this.el.object3D.scale.y = this.scaleFactor * this.initialScale.y;
+        this.el.object3D.scale.z = this.scaleFactor * this.initialScale.z;
+      },
+    });
+  </script>
+</head>
+<body>
+
+  <a-scene
+    mindar-image="imageTargetSrc: ./targets.mind;"
+    color-space="sRGB"
+    renderer="colorManagement: true, physicallyCorrectLights"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false"
+    gesture-detector> <a-assets>
+      <a-asset-item id="avatarModel" src="./AnpingMinorArtilleryFort.glb"></a-asset-item>
+    </a-assets>
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <a-entity mindar-image-target="targetIndex: 0">
+      
+      <a-entity 
+        gesture-handler 
+        look-controls="enabled: true; touchEnabled: true; mouseEnabled: true; magicWindowTrackingEnabled: false;">
+        
+        <a-gltf-model
+          src="#avatarModel"
+          rotation="-90 0 0" position="0 0 0"
+          scale="0.5 0.5 0.5" animation-mixer>
+        </a-gltf-model>
       </a-entity>
 
-    </a-scene>
-  </body>
+    </a-entity>
+
+  </a-scene>
+</body>
 </html>
