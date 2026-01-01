@@ -2,29 +2,31 @@
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WebAR 3D Model - Reset & Infinite Rotate</title>
+  <title>WebAR Fixed - Reset & Infinite Rotate</title>
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
 
   <style>
-    /* 復位按鈕的樣式 */
     #reset-btn {
       position: fixed;
-      bottom: 20px; /* 距離底部的位置 */
+      bottom: 20px;
       left: 50%;
-      transform: translateX(-50%); /* 讓按鈕水平置中 */
+      transform: translateX(-50%);
       padding: 12px 24px;
-      background-color: #ff5722; /* 橘色按鈕 */
+      background-color: #ff5722;
       color: white;
       border: none;
       border-radius: 30px;
       font-size: 16px;
       font-weight: bold;
       box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-      z-index: 1000; /* 確保按鈕浮在最上層 */
+      z-index: 1000;
       cursor: pointer;
-      display: none; /* 一開始隱藏，掃描到圖片後再顯示 (可選) */
+      display: none; 
+      /* 避免手機長按選取文字 */
+      user-select: none; 
+      -webkit-user-select: none;
     }
     #reset-btn:active {
       background-color: #e64a19;
@@ -33,17 +35,15 @@
   </style>
 
   <script>
-    // --- 1. 手勢偵測組件 (負責告訴系統使用者正在 拖曳 或 縮放) ---
+    // --- 1. 手勢偵測組件 (這部分沒變) ---
     AFRAME.registerComponent('gesture-detector', {
       init: function () {
         this.handleTouchStart = this.handleTouchStart.bind(this);
         this.handleTouchMove = this.handleTouchMove.bind(this);
         this.handleTouchEnd = this.handleTouchEnd.bind(this);
-
         this.el.sceneEl.canvas.addEventListener('touchstart', this.handleTouchStart);
         this.el.sceneEl.canvas.addEventListener('touchmove', this.handleTouchMove);
         this.el.sceneEl.canvas.addEventListener('touchend', this.handleTouchEnd);
-        
         this.internalState = { previousState: null };
       },
       remove: function () {
@@ -62,29 +62,18 @@
           const previousState = this.internalState.previousState;
           const touchType = event.touches.length === 2 ? 'pinch' : 'rotate';
           const spread = event.touches.length === 2 ? this.getSpread(event.touches) : 0;
-          
-          // 發送縮放事件
           if (touchType === 'pinch' && previousState.touches.length === 2) {
             const spreadChange = spread - previousState.spread;
             this.el.emit('gesture-scale', { spreadChange: spreadChange, startSpread: previousState.spread });
           }
-          
-          // 發送旋轉事件 (單指)
           if (touchType === 'rotate' && event.touches.length === 1 && previousState.touches.length === 1) {
             const positionChange = event.touches[0].clientX - previousState.touches[0].clientX;
             this.el.emit('gesture-rotate', { positionChange: positionChange });
           }
-
-          // 更新狀態
-          this.internalState.previousState = {
-            touches: event.touches,
-            spread: spread
-          };
+          this.internalState.previousState = { touches: event.touches, spread: spread };
         }
       },
-      handleTouchEnd: function (event) {
-        this.internalState.previousState = null;
-      },
+      handleTouchEnd: function (event) { this.internalState.previousState = null; },
       getSpread: function (touches) {
         const dx = touches[0].clientX - touches[1].clientX;
         const dy = touches[0].clientY - touches[1].clientY;
@@ -92,11 +81,11 @@
       }
     });
 
-    // --- 2. 手勢處理組件 (負責實際旋轉與縮放模型) ---
+    // --- 2. 手勢處理組件 (關鍵修正處!) ---
     AFRAME.registerComponent('gesture-handler', {
       schema: {
         enabled: { default: true },
-        rotationFactor: { default: 5 }, // 旋轉靈敏度 (越大轉越快)
+        rotationFactor: { default: 5 },
         minScale: { default: 0.1 },
         maxScale: { default: 8 },
       },
@@ -104,9 +93,13 @@
         this.handleScale = this.handleScale.bind(this);
         this.handleRotation = this.handleRotation.bind(this);
 
-        this.initialScale = this.el.object3D.scale.clone(); 
-        this.scaleFactor = 1;
+        // === 關鍵修正開始 ===
+        // 舊的錯誤寫法: this.initialScale = this.el.object3D.scale.clone();
+        // 新的正確寫法: 強制設定初始基準縮放為 1, 1, 1
+        this.initialScale = new THREE.Vector3(1, 1, 1);
+        // === 關鍵修正結束 ===
 
+        this.scaleFactor = 1;
         this.el.sceneEl.addEventListener('gesture-scale', this.handleScale);
         this.el.sceneEl.addEventListener('gesture-rotate', this.handleRotation);
       },
@@ -117,13 +110,13 @@
       handleScale: function (event) {
         this.scaleFactor *= 1 + (event.detail.spreadChange / event.detail.startSpread) * 2;
         this.scaleFactor = Math.min(Math.max(this.scaleFactor, this.data.minScale), this.data.maxScale);
+        
         this.el.object3D.scale.x = this.scaleFactor * this.initialScale.x;
         this.el.object3D.scale.y = this.scaleFactor * this.initialScale.y;
         this.el.object3D.scale.z = this.scaleFactor * this.initialScale.z;
       },
       handleRotation: function (event) {
-        // 這邊實現 720 度無限旋轉
-        // 直接修改 rotation.y，沒有限制範圍
+        // 無限旋轉
         this.el.object3D.rotation.y += event.detail.positionChange * this.data.rotationFactor * 0.001;
       }
     });
@@ -139,7 +132,9 @@
     renderer="colorManagement: true, physicallyCorrectLights" 
     vr-mode-ui="enabled: false" 
     device-orientation-permission-ui="enabled: false"
-    gesture-detector> <a-assets>
+    gesture-detector>
+
+    <a-assets>
       <a-asset-item id="avatarModel" src="./model.glb"></a-asset-item>
     </a-assets>
 
@@ -165,42 +160,25 @@
 
   <script>
     // --- 3. 復位功能與 UI 邏輯 ---
-
     const resetBtn = document.getElementById('reset-btn');
     const targetEntity = document.getElementById('target-entity');
     const modelContainer = document.getElementById('model-container');
-    const gltfModel = document.querySelector('a-gltf-model');
 
-    // 取得初始設定值 (這樣你就不用在 JS 裡重寫一次數字)
-    // 注意：這裡抓的是 <a-gltf-model> 的初始值
-    const initialScaleStr = gltfModel.getAttribute('scale'); 
-    // rotation 因為我們是轉動外層的 container，所以要重置外層
-    // 但通常外層 container 初始是 0 0 0
-    
-    // 顯示/隱藏按鈕邏輯
     targetEntity.addEventListener("targetFound", event => {
-      resetBtn.style.display = 'block'; // 掃到圖才顯示按鈕
+      resetBtn.style.display = 'block';
     });
     targetEntity.addEventListener("targetLost", event => {
-      resetBtn.style.display = 'none'; // 圖片不見就隱藏按鈕
+      resetBtn.style.display = 'none';
     });
 
-    // 復位函式
     function resetModel() {
-      // 1. 重置縮放 (gesture-handler 改變的是 modelContainer 的 scale)
-      // 因為 gesture-handler 我們是寫在 container 上，但它會去讀 initialScale
-      // 最簡單的暴力解法：直接重新刷新組件狀態
-      
       // 重置 Container 的旋轉 (回到正面)
       modelContainer.object3D.rotation.set(0, 0, 0);
       
       // 重置 Container 的縮放 (回到 1倍)
-      // 注意：我們的模型大小是定義在 <a-gltf-model> 裡的 scale="0.5 0.5 0.5"
-      // 而 gesture-handler 是改變外層 <a-entity> 的 scale (初始為 1 1 1)
       modelContainer.object3D.scale.set(1, 1, 1);
 
-      // 如果你需要重置 gesture-handler 內部的變數 (例如 scaleFactor)，
-      // 雖然上面直接改 object3D 有效，但為了避免下次縮放跳動，我們可以重新觸發 init
+      // 重置 gesture-handler 內部的計數器，避免下次縮放跳動
       const handlerComponent = modelContainer.components['gesture-handler'];
       if (handlerComponent) {
         handlerComponent.scaleFactor = 1;
