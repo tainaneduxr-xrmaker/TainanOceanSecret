@@ -2,189 +2,157 @@
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>安平小砲台 載入中</title>
+  <title>AR Model Rotation Debugger</title>
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
 
   <style>
-    /* 復位按鈕樣式 */
-    #reset-btn {
+    /* 強制隱藏 VR 按鈕 */
+    .a-enter-vr { display: none !important; }
+
+    /* 除錯面板樣式 */
+    #debug-panel {
       position: fixed;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 12px 24px;
-      background-color: #ff5722;
-      color: white;
-      border: none;
-      border-radius: 30px;
-      font-size: 16px;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      color: #fff;
+      padding: 15px;
+      font-family: monospace;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      box-sizing: border-box;
+    }
+    .slider-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    label {
+      width: 30px;
       font-weight: bold;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-      z-index: 1000;
-      cursor: pointer;
-      display: none; /* 一開始隱藏 */
-      user-select: none; 
-      -webkit-user-select: none;
+      font-size: 18px;
     }
-    #reset-btn:active {
-      background-color: #e64a19;
-      transform: translateX(-50%) scale(0.95);
+    input[type=range] {
+      flex-grow: 1;
+      margin: 0 10px;
     }
-    /* 強制隱藏 A-Frame 的 VR 眼鏡按鈕 */
-    .a-enter-vr {
-      display: none !important;
+    span.val {
+      width: 40px;
+      text-align: right;
+    }
+    #result-display {
+      text-align: center;
+      font-size: 18px;
+      color: #00ff00; /* 綠色字體 */
+      font-weight: bold;
+      border: 1px solid #555;
+      padding: 5px;
+      margin-bottom: 5px;
+      background: #222;
+    }
+    h3 {
+      margin: 0 0 5px 0;
+      font-size: 14px;
+      text-align: center;
+      color: #aaa;
     }
   </style>
-
-  <script>
-    // --- 手勢偵測 (Gesture Detector) ---
-    // 負責監聽螢幕觸控事件，判斷是單指移動還是雙指縮放
-    AFRAME.registerComponent('gesture-detector', {
-      init: function () {
-        this.handleTouchStart = this.handleTouchStart.bind(this);
-        this.handleTouchMove = this.handleTouchMove.bind(this);
-        this.handleTouchEnd = this.handleTouchEnd.bind(this);
-        this.el.sceneEl.canvas.addEventListener('touchstart', this.handleTouchStart);
-        this.el.sceneEl.canvas.addEventListener('touchmove', this.handleTouchMove);
-        this.el.sceneEl.canvas.addEventListener('touchend', this.handleTouchEnd);
-        this.internalState = { previousState: null };
-      },
-      remove: function () {
-        this.el.sceneEl.canvas.removeEventListener('touchstart', this.handleTouchStart);
-        this.el.sceneEl.canvas.removeEventListener('touchmove', this.handleTouchMove);
-        this.el.sceneEl.canvas.removeEventListener('touchend', this.handleTouchEnd);
-      },
-      handleTouchStart: function (event) {
-        this.internalState.previousState = {
-          touches: event.touches,
-          spread: event.touches.length === 2 ? this.getSpread(event.touches) : 0
-        };
-      },
-      handleTouchMove: function (event) {
-        if (this.internalState.previousState) {
-          const previousState = this.internalState.previousState;
-          const touchType = event.touches.length === 2 ? 'pinch' : 'rotate';
-          const spread = event.touches.length === 2 ? this.getSpread(event.touches) : 0;
-          if (touchType === 'pinch' && previousState.touches.length === 2) {
-            const spreadChange = spread - previousState.spread;
-            this.el.emit('gesture-scale', { spreadChange: spreadChange, startSpread: previousState.spread });
-          }
-          if (touchType === 'rotate' && event.touches.length === 1 && previousState.touches.length === 1) {
-            const positionChange = event.touches[0].clientX - previousState.touches[0].clientX;
-            this.el.emit('gesture-rotate', { positionChange: positionChange });
-          }
-          this.internalState.previousState = { touches: event.touches, spread: spread };
-        }
-      },
-      handleTouchEnd: function (event) { this.internalState.previousState = null; },
-      getSpread: function (touches) {
-        const dx = touches[0].clientX - touches[1].clientX;
-        const dy = touches[0].clientY - touches[1].clientY;
-        return Math.sqrt(dx * dx + dy * dy);
-      }
-    });
-
-    // --- 手勢處理 (Gesture Handler) ---
-    // 接收偵測到的訊號，實際對模型進行旋轉或縮放
-    AFRAME.registerComponent('gesture-handler', {
-      schema: {
-        enabled: { default: true },
-        rotationFactor: { default: 5 }, // 旋轉速度
-        minScale: { default: 0.1 },     // 最小縮放
-        maxScale: { default: 8 },       // 最大縮放
-      },
-      init: function () {
-        this.handleScale = this.handleScale.bind(this);
-        this.handleRotation = this.handleRotation.bind(this);
-        
-        this.initialScale = { x: 1, y: 1, z: 1 };
-        this.scaleFactor = 1;
-
-        this.el.sceneEl.addEventListener('gesture-scale', this.handleScale);
-        this.el.sceneEl.addEventListener('gesture-rotate', this.handleRotation);
-      },
-      remove: function () {
-        this.el.sceneEl.removeEventListener('gesture-scale', this.handleScale);
-        this.el.sceneEl.removeEventListener('gesture-rotate', this.handleRotation);
-      },
-      handleScale: function (event) {
-        this.scaleFactor *= 1 + (event.detail.spreadChange / event.detail.startSpread) * 2;
-        this.scaleFactor = Math.min(Math.max(this.scaleFactor, this.data.minScale), this.data.maxScale);
-        this.el.object3D.scale.x = this.scaleFactor * this.initialScale.x;
-        this.el.object3D.scale.y = this.scaleFactor * this.initialScale.y;
-        this.el.object3D.scale.z = this.scaleFactor * this.initialScale.z;
-      },
-      handleRotation: function (event) {
-        // 無限旋轉
-        this.el.object3D.rotation.y += event.detail.positionChange * this.data.rotationFactor * 0.001;
-      }
-    });
-  </script>
 </head>
 <body>
 
-  <button id="reset-btn" onclick="resetModel()">↺ 復位模型</button>
+  <div id="debug-panel">
+    <h3>調整滑桿直到模型方向正確</h3>
+    <div id="result-display">rotation="0 0 0"</div>
+
+    <div class="slider-row">
+      <label style="color:red">X</label>
+      <input type="range" id="rot-x" min="-180" max="180" value="0" step="5">
+      <span id="val-x" class="val">0</span>
+    </div>
+
+    <div class="slider-row">
+      <label style="color:green">Y</label>
+      <input type="range" id="rot-y" min="-180" max="180" value="0" step="5">
+      <span id="val-y" class="val">0</span>
+    </div>
+
+    <div class="slider-row">
+      <label style="color:cyan">Z</label>
+      <input type="range" id="rot-z" min="-180" max="180" value="0" step="5">
+      <span id="val-z" class="val">0</span>
+    </div>
+  </div>
 
   <a-scene 
     mindar-image="imageTargetSrc: ./targets.mind; uiScanning: no;" 
     color-space="sRGB" 
     renderer="colorManagement: true, physicallyCorrectLights" 
     vr-mode-ui="enabled: false" 
-    device-orientation-permission-ui="enabled: false"
-    gesture-detector>
+    device-orientation-permission-ui="enabled: false">
 
     <a-assets>
-      <a-asset-item id="avatarModel" src="./AnpingMinorArtilleryFort.glb"></a-asset-item>
+      <a-asset-item id="avatarModel" src="./model.glb"></a-asset-item>
     </a-assets>
 
     <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
-    <a-entity mindar-image-target="targetIndex: 0" id="target-entity">
+    <a-entity mindar-image-target="targetIndex: 0">
       
-      <a-entity id="model-container" gesture-handler>
-        
-        <a-gltf-model 
-          src="#avatarModel" 
-          rotation="0 90 0" 
-          position="0 0 0" 
-          scale="0.5 0.5 0.5" 
-          animation-mixer>
-        </a-gltf-model>
+      <a-gltf-model 
+        id="debug-model"
+        src="#avatarModel" 
+        rotation="0 0 0" 
+        position="0 0 0" 
+        scale="0.5 0.5 0.5" 
+        animation-mixer>
+      </a-gltf-model>
 
-      </a-entity>
     </a-entity>
   </a-scene>
 
   <script>
-    // --- UI 控制邏輯 ---
-    const resetBtn = document.getElementById('reset-btn');
-    const targetEntity = document.getElementById('target-entity');
-    const modelContainer = document.getElementById('model-container');
+    // 取得元件
+    const model = document.getElementById('debug-model');
+    const sliderX = document.getElementById('rot-x');
+    const sliderY = document.getElementById('rot-y');
+    const sliderZ = document.getElementById('rot-z');
+    
+    const valX = document.getElementById('val-x');
+    const valY = document.getElementById('val-y');
+    const valZ = document.getElementById('val-z');
+    
+    const resultDisplay = document.getElementById('result-display');
 
-    // 掃到圖顯示按鈕
-    targetEntity.addEventListener("targetFound", event => {
-      resetBtn.style.display = 'block';
-    });
-    // 圖遺失隱藏按鈕
-    targetEntity.addEventListener("targetLost", event => {
-      resetBtn.style.display = 'none';
-    });
+    // 統一更新函式
+    function updateRotation() {
+      const x = sliderX.value;
+      const y = sliderY.value;
+      const z = sliderZ.value;
 
-    // 復位功能
-    function resetModel() {
-      // 復位旋轉 (Y軸歸零)
-      modelContainer.object3D.rotation.set(0, 0, 0);
-      // 復位縮放 (回到1倍)
-      modelContainer.object3D.scale.set(1, 1, 1);
+      // 更新數字顯示
+      valX.textContent = x;
+      valY.textContent = y;
+      valZ.textContent = z;
+
+      // 產生結果字串
+      const rotationString = `${x} ${y} ${z}`;
       
-      // 重置手勢處理器的內部狀態
-      const handlerComponent = modelContainer.components['gesture-handler'];
-      if (handlerComponent) {
-        handlerComponent.scaleFactor = 1;
-      }
+      // 更新螢幕上的綠色文字，方便你抄寫
+      resultDisplay.textContent = `rotation="${rotationString}"`;
+
+      // 實際轉動模型
+      model.setAttribute('rotation', rotationString);
     }
+
+    // 監聽滑動事件
+    sliderX.addEventListener('input', updateRotation);
+    sliderY.addEventListener('input', updateRotation);
+    sliderZ.addEventListener('input', updateRotation);
   </script>
 </body>
 </html>
