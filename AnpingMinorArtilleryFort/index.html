@@ -2,12 +2,13 @@
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WebAR Final Fix</title>
+  <title>WebAR Final Version</title>
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
 
   <style>
+    /* 復位按鈕樣式 */
     #reset-btn {
       position: fixed;
       bottom: 20px;
@@ -23,14 +24,19 @@
       box-shadow: 0 4px 6px rgba(0,0,0,0.3);
       z-index: 1000;
       cursor: pointer;
-      display: none; 
+      display: none; /* 一開始隱藏 */
       user-select: none; 
       -webkit-user-select: none;
+    }
+    #reset-btn:active {
+      background-color: #e64a19;
+      transform: translateX(-50%) scale(0.95);
     }
   </style>
 
   <script>
     // --- 手勢偵測 (Gesture Detector) ---
+    // 負責監聽螢幕觸控事件，判斷是單指移動還是雙指縮放
     AFRAME.registerComponent('gesture-detector', {
       init: function () {
         this.handleTouchStart = this.handleTouchStart.bind(this);
@@ -77,18 +83,18 @@
     });
 
     // --- 手勢處理 (Gesture Handler) ---
+    // 接收偵測到的訊號，實際對模型進行旋轉或縮放
     AFRAME.registerComponent('gesture-handler', {
       schema: {
         enabled: { default: true },
-        rotationFactor: { default: 5 },
-        minScale: { default: 0.1 },
-        maxScale: { default: 8 },
+        rotationFactor: { default: 5 }, // 旋轉速度
+        minScale: { default: 0.1 },     // 最小縮放
+        maxScale: { default: 8 },       // 最大縮放
       },
       init: function () {
         this.handleScale = this.handleScale.bind(this);
         this.handleRotation = this.handleRotation.bind(this);
         
-        // 強制設定初始值，避免模型消失
         this.initialScale = { x: 1, y: 1, z: 1 };
         this.scaleFactor = 1;
 
@@ -107,6 +113,7 @@
         this.el.object3D.scale.z = this.scaleFactor * this.initialScale.z;
       },
       handleRotation: function (event) {
+        // 無限旋轉
         this.el.object3D.rotation.y += event.detail.positionChange * this.data.rotationFactor * 0.001;
       }
     });
@@ -142,34 +149,33 @@
           animation-mixer>
         </a-gltf-model>
 
-        <a-box position="0.5 0 0" scale="0.2 0.2 0.2" color="red"></a-box>
-
       </a-entity>
     </a-entity>
   </a-scene>
 
   <script>
+    // --- UI 控制邏輯 ---
     const resetBtn = document.getElementById('reset-btn');
     const targetEntity = document.getElementById('target-entity');
     const modelContainer = document.getElementById('model-container');
 
     // 掃到圖顯示按鈕
     targetEntity.addEventListener("targetFound", event => {
-      console.log("Found target");
       resetBtn.style.display = 'block';
     });
     // 圖遺失隱藏按鈕
     targetEntity.addEventListener("targetLost", event => {
-      console.log("Lost target");
       resetBtn.style.display = 'none';
     });
 
+    // 復位功能
     function resetModel() {
-      // 復位旋轉
+      // 復位旋轉 (Y軸歸零)
       modelContainer.object3D.rotation.set(0, 0, 0);
-      // 復位縮放
+      // 復位縮放 (回到1倍)
       modelContainer.object3D.scale.set(1, 1, 1);
       
+      // 重置手勢處理器的內部狀態
       const handlerComponent = modelContainer.components['gesture-handler'];
       if (handlerComponent) {
         handlerComponent.scaleFactor = 1;
