@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>安平小砲台 載入中</title>
+  <title>安平小砲台 3D 展示</title>
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
@@ -40,7 +40,6 @@
 
   <script>
     // --- 手勢偵測 (Gesture Detector) ---
-    // 負責監聽螢幕觸控事件，判斷是單指移動還是雙指縮放
     AFRAME.registerComponent('gesture-detector', {
       init: function () {
         this.handleTouchStart = this.handleTouchStart.bind(this);
@@ -67,13 +66,25 @@
           const previousState = this.internalState.previousState;
           const touchType = event.touches.length === 2 ? 'pinch' : 'rotate';
           const spread = event.touches.length === 2 ? this.getSpread(event.touches) : 0;
+          
+          // 雙指縮放
           if (touchType === 'pinch' && previousState.touches.length === 2) {
             const spreadChange = spread - previousState.spread;
             this.el.emit('gesture-scale', { spreadChange: spreadChange, startSpread: previousState.spread });
           }
+          
+          // 單指旋轉 (更新：同時偵測 X 和 Y 的移動)
           if (touchType === 'rotate' && event.touches.length === 1 && previousState.touches.length === 1) {
-            const positionChange = event.touches[0].clientX - previousState.touches[0].clientX;
-            this.el.emit('gesture-rotate', { positionChange: positionChange });
+            // 計算水平位移 (X)
+            const positionChangeX = event.touches[0].clientX - previousState.touches[0].clientX;
+            // 計算垂直位移 (Y) - 這裡就是新增的關鍵
+            const positionChangeY = event.touches[0].clientY - previousState.touches[0].clientY;
+            
+            // 發送事件包含 X 和 Y 的變化
+            this.el.emit('gesture-rotate', { 
+              positionChangeX: positionChangeX,
+              positionChangeY: positionChangeY 
+            });
           }
           this.internalState.previousState = { touches: event.touches, spread: spread };
         }
@@ -87,13 +98,12 @@
     });
 
     // --- 手勢處理 (Gesture Handler) ---
-    // 接收偵測到的訊號，實際對模型進行旋轉或縮放
     AFRAME.registerComponent('gesture-handler', {
       schema: {
         enabled: { default: true },
-        rotationFactor: { default: 5 }, // 旋轉速度
-        minScale: { default: 0.1 },     // 最小縮放
-        maxScale: { default: 8 },       // 最大縮放
+        rotationFactor: { default: 5 }, 
+        minScale: { default: 0.1 },     
+        maxScale: { default: 8 },       
       },
       init: function () {
         this.handleScale = this.handleScale.bind(this);
@@ -117,8 +127,15 @@
         this.el.object3D.scale.z = this.scaleFactor * this.initialScale.z;
       },
       handleRotation: function (event) {
-        // 無限旋轉
-        this.el.object3D.rotation.y += event.detail.positionChange * this.data.rotationFactor * 0.001;
+        // 1. 水平滑動 -> 改變 Y 軸旋轉 (左右轉)
+        if (event.detail.positionChangeX) {
+          this.el.object3D.rotation.y += event.detail.positionChangeX * this.data.rotationFactor * 0.001;
+        }
+        
+        // 2. 垂直滑動 -> 改變 X 軸旋轉 (上下轉) [新增功能]
+        if (event.detail.positionChangeY) {
+          this.el.object3D.rotation.x += event.detail.positionChangeY * this.data.rotationFactor * 0.001;
+        }
       }
     });
   </script>
@@ -163,23 +180,22 @@
     const targetEntity = document.getElementById('target-entity');
     const modelContainer = document.getElementById('model-container');
 
-    // 掃到圖顯示按鈕
     targetEntity.addEventListener("targetFound", event => {
       resetBtn.style.display = 'block';
     });
-    // 圖遺失隱藏按鈕
     targetEntity.addEventListener("targetLost", event => {
       resetBtn.style.display = 'none';
     });
 
-    // 復位功能
+    // 復位功能 (這裡很重要，因為現在模型可以被轉得很亂)
     function resetModel() {
-      // 復位旋轉 (Y軸歸零)
+      // 將旋轉全部歸零 (X, Y, Z 都回到 0)
       modelContainer.object3D.rotation.set(0, 0, 0);
-      // 復位縮放 (回到1倍)
+      
+      // 將縮放回到 1
       modelContainer.object3D.scale.set(1, 1, 1);
       
-      // 重置手勢處理器的內部狀態
+      // 重置手勢狀態
       const handlerComponent = modelContainer.components['gesture-handler'];
       if (handlerComponent) {
         handlerComponent.scaleFactor = 1;
