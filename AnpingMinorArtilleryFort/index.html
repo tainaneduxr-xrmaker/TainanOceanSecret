@@ -32,6 +32,10 @@
       background-color: #e64a19;
       transform: translateX(-50%) scale(0.95);
     }
+    /* 強制隱藏 A-Frame 的 VR 眼鏡按鈕 */
+    .a-enter-vr {
+      display: none !important;
+    }
   </style>
 
   <script>
@@ -143,7 +147,7 @@
         
         <a-gltf-model 
           src="#avatarModel" 
-          rotation="0 0 0" 
+          rotation="0 90 0" 
           position="0 0 0" 
           scale="0.5 0.5 0.5" 
           animation-mixer>
