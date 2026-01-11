@@ -1,0 +1,207 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>二鯤鯓砲臺 3D 展示</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+
+  <style>
+    /* 復位按鈕樣式 */
+    #reset-btn {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 12px 24px;
+      background-color: #ff5722;
+      color: white;
+      border: none;
+      border-radius: 30px;
+      font-size: 16px;
+      font-weight: bold;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+      z-index: 1000;
+      cursor: pointer;
+      display: none; /* 一開始隱藏 */
+      user-select: none; 
+      -webkit-user-select: none;
+    }
+    #reset-btn:active {
+      background-color: #e64a19;
+      transform: translateX(-50%) scale(0.95);
+    }
+    /* 強制隱藏 A-Frame 的 VR 眼鏡按鈕 */
+    .a-enter-vr {
+      display: none !important;
+    }
+  </style>
+
+  <script>
+    // --- 手勢偵測 (Gesture Detector) ---
+    AFRAME.registerComponent('gesture-detector', {
+      init: function () {
+        this.handleTouchStart = this.handleTouchStart.bind(this);
+        this.handleTouchMove = this.handleTouchMove.bind(this);
+        this.handleTouchEnd = this.handleTouchEnd.bind(this);
+        this.el.sceneEl.canvas.addEventListener('touchstart', this.handleTouchStart);
+        this.el.sceneEl.canvas.addEventListener('touchmove', this.handleTouchMove);
+        this.el.sceneEl.canvas.addEventListener('touchend', this.handleTouchEnd);
+        this.internalState = { previousState: null };
+      },
+      remove: function () {
+        this.el.sceneEl.canvas.removeEventListener('touchstart', this.handleTouchStart);
+        this.el.sceneEl.canvas.removeEventListener('touchmove', this.handleTouchMove);
+        this.el.sceneEl.canvas.removeEventListener('touchend', this.handleTouchEnd);
+      },
+      handleTouchStart: function (event) {
+        this.internalState.previousState = {
+          touches: event.touches,
+          spread: event.touches.length === 2 ? this.getSpread(event.touches) : 0
+        };
+      },
+      handleTouchMove: function (event) {
+        if (this.internalState.previousState) {
+          const previousState = this.internalState.previousState;
+          const touchType = event.touches.length === 2 ? 'pinch' : 'rotate';
+          const spread = event.touches.length === 2 ? this.getSpread(event.touches) : 0;
+          
+          // 雙指縮放
+          if (touchType === 'pinch' && previousState.touches.length === 2) {
+            const spreadChange = spread - previousState.spread;
+            this.el.emit('gesture-scale', { spreadChange: spreadChange, startSpread: previousState.spread });
+          }
+          
+          // 單指旋轉 (更新：同時偵測 X 和 Y 的移動)
+          if (touchType === 'rotate' && event.touches.length === 1 && previousState.touches.length === 1) {
+            // 計算水平位移 (X)
+            const positionChangeX = event.touches[0].clientX - previousState.touches[0].clientX;
+            // 計算垂直位移 (Y) - 這裡就是新增的關鍵
+            const positionChangeY = event.touches[0].clientY - previousState.touches[0].clientY;
+            
+            // 發送事件包含 X 和 Y 的變化
+            this.el.emit('gesture-rotate', { 
+              positionChangeX: positionChangeX,
+              positionChangeY: positionChangeY 
+            });
+          }
+          this.internalState.previousState = { touches: event.touches, spread: spread };
+        }
+      },
+      handleTouchEnd: function (event) { this.internalState.previousState = null; },
+      getSpread: function (touches) {
+        const dx = touches[0].clientX - touches[1].clientX;
+        const dy = touches[0].clientY - touches[1].clientY;
+        return Math.sqrt(dx * dx + dy * dy);
+      }
+    });
+
+    // --- 手勢處理 (Gesture Handler) ---
+    AFRAME.registerComponent('gesture-handler', {
+      schema: {
+        enabled: { default: true },
+        rotationFactor: { default: 5 }, 
+        minScale: { default: 0.1 },     
+        maxScale: { default: 8 },       
+      },
+      init: function () {
+        this.handleScale = this.handleScale.bind(this);
+        this.handleRotation = this.handleRotation.bind(this);
+        
+        this.initialScale = { x: 1, y: 1, z: 1 };
+        this.scaleFactor = 1;
+
+        this.el.sceneEl.addEventListener('gesture-scale', this.handleScale);
+        this.el.sceneEl.addEventListener('gesture-rotate', this.handleRotation);
+      },
+      remove: function () {
+        this.el.sceneEl.removeEventListener('gesture-scale', this.handleScale);
+        this.el.sceneEl.removeEventListener('gesture-rotate', this.handleRotation);
+      },
+      handleScale: function (event) {
+        this.scaleFactor *= 1 + (event.detail.spreadChange / event.detail.startSpread) * 2;
+        this.scaleFactor = Math.min(Math.max(this.scaleFactor, this.data.minScale), this.data.maxScale);
+        this.el.object3D.scale.x = this.scaleFactor * this.initialScale.x;
+        this.el.object3D.scale.y = this.scaleFactor * this.initialScale.y;
+        this.el.object3D.scale.z = this.scaleFactor * this.initialScale.z;
+      },
+      handleRotation: function (event) {
+        // 1. 水平滑動 -> 改變 Y 軸旋轉 (左右轉)
+        if (event.detail.positionChangeX) {
+          this.el.object3D.rotation.y += event.detail.positionChangeX * this.data.rotationFactor * 0.001;
+        }
+        
+        // 2. 垂直滑動 -> 改變 X 軸旋轉 (上下轉) [新增功能]
+        if (event.detail.positionChangeY) {
+          this.el.object3D.rotation.x += event.detail.positionChangeY * this.data.rotationFactor * 0.001;
+        }
+      }
+    });
+  </script>
+</head>
+<body>
+
+  <button id="reset-btn" onclick="resetModel()">↺ 復位模型</button>
+
+<a-scene 
+      mindar-image="imageTargetSrc: ./targets.mind; uiScanning: no; filterMinCF:0.0001; filterBeta: 0.001;" 
+      color-space="sRGB" 
+      renderer="colorManagement: true, physicallyCorrectLights" 
+      vr-mode-ui="enabled: false" 
+      device-orientation-permission-ui="enabled: false"
+      gesture-detector>
+
+    <a-assets>
+      <a-asset-item id="avatarModel" src="./ErkunshenFortress.glb"></a-asset-item>
+    </a-assets>
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <a-entity mindar-image-target="targetIndex: 0" id="target-entity">
+      
+      <a-entity id="model-container" gesture-handler>
+        
+        <a-gltf-model 
+          src="#avatarModel" 
+          rotation="90 0 0" 
+          position="0 0 0" 
+          scale="0.5 0.5 0.5" 
+          animation-mixer>
+        </a-gltf-model>
+
+      </a-entity>
+    </a-entity>
+  </a-scene>
+
+  <script>
+    // --- UI 控制邏輯 ---
+    const resetBtn = document.getElementById('reset-btn');
+    const targetEntity = document.getElementById('target-entity');
+    const modelContainer = document.getElementById('model-container');
+
+    targetEntity.addEventListener("targetFound", event => {
+      resetBtn.style.display = 'block';
+    });
+    targetEntity.addEventListener("targetLost", event => {
+      resetBtn.style.display = 'none';
+    });
+
+    // 復位功能 (這裡很重要，因為現在模型可以被轉得很亂)
+    function resetModel() {
+      // 將旋轉全部歸零 (X, Y, Z 都回到 0)
+      modelContainer.object3D.rotation.set(0, 0, 0);
+      
+      // 將縮放回到 1
+      modelContainer.object3D.scale.set(1, 1, 1);
+      
+      // 重置手勢狀態
+      const handlerComponent = modelContainer.components['gesture-handler'];
+      if (handlerComponent) {
+        handlerComponent.scaleFactor = 1;
+      }
+    }
+  </script>
+</body>
+</html>
